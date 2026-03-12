@@ -1,7 +1,7 @@
 {
   "name": "AFK Bot",
   "bot-account": {
-    "username": "imgonnacream",
+    "username": "Serloss_Botafk",
     "password": "",
     "type": "offline"
   },
@@ -31,9 +31,9 @@
       "repeat": true,
       "repeat-delay": 120,
       "messages": [
-        "I'm a regular player",
-        "Subscribe to Slobos!",
-        "I like to play Minecraft!"
+        "วู้ววว",
+        "วันนี้เป็นวันนี้ใช่ไหม",
+        "ให้ฉันเดินนน"
       ]
     },
     "chat-log": true,
@@ -47,7 +47,7 @@
     }
   },
   "movement": {
-    "enabled": true,
+    "enabled": false,
     "circle-walk": {
       "enabled": true,
       "radius": 4,
@@ -78,8 +78,8 @@
     "place-night": false
   },
   "discord": {
-    "enabled": false,
-    "webhookUrl": "YOUR_DISCORD_WEBHOOK_URL_HERE",
+    "enabled": true,
+    "webhookUrl": "https://discord.com/api/webhooks/1481614060851040277/jg-jM0sXB0RHlbv_gZRNmH58RgVxWddlFPs6Kc2XxVW2btuYNHFPngdHHtoqkowhu47M",
     "events": {
       "connect": true,
       "disconnect": true,
