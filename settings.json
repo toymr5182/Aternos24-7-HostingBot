@@ -1,13 +1,13 @@
 {
   "name": "AFK Bot",
   "bot-account": {
-    "username": "SerlossM",
+    "username": "EERTO",
     "password": "",
     "type": "offline"
   },
   "server": {
     "ip": "play.amorycraft.com",
-    "port": 22631,
+    "port": 25565,
     "version": "",
     "try-creative": false
   },
@@ -20,7 +20,7 @@
   "utils": {
     "auto-auth": {
       "enabled": true,
-      "password": "chalol78"
+      "password": "a12345"
     },
     "anti-afk": {
       "enabled": true,
