@@ -555,13 +555,12 @@ function createBot() {
       clearAllIntervals();
       spawnHandled = false; // reset for next connection
 
-      if (config.discord && config.discord.events && config.discord.events.disconnect && reason !== 'Periodic Rejoin') {
+      if (config.discord && config.discord.events && config.discord.events.disconnect) {
         sendDiscordWebhook(`[-] **Disconnected**: ${reason || 'Unknown'}`, 0xf87171);
       }
 
-      if (config.utils['auto-reconnect']) {
-        scheduleReconnect();
-      }
+      // ALWAYS reconnect — bot must never leave the server
+      scheduleReconnect();
     });
 
     bot.on('error', (err) => {
@@ -1007,9 +1006,6 @@ rl.on('line', (line) => {
     bot.chat('/' + trimmed.slice(4));
   } else if (trimmed === 'status') {
     console.log(`Connected: ${botState.connected}, Uptime: ${formatUptime(Math.floor((Date.now() - botState.startTime) / 1000))}`);
-  } else if (trimmed === 'reconnect') {
-    console.log('[Console] Manual reconnect requested');
-    bot.end();
   } else {
     bot.chat(trimmed);
   }
@@ -1077,6 +1073,11 @@ process.on('uncaughtException', (err) => {
   console.log(`[FATAL] Uncaught Exception: ${msg}`);
   botState.errors.push({ type: 'uncaught', message: msg, time: Date.now() });
 
+  // Cap errors array to prevent memory leak over long uptimes
+  if (botState.errors.length > 100) {
+    botState.errors = botState.errors.slice(-50);
+  }
+
   const isNetworkError = msg.includes('PartialReadError') || msg.includes('ECONNRESET') ||
     msg.includes('EPIPE') || msg.includes('ETIMEDOUT') || msg.includes('timed out') ||
     msg.includes('write after end') || msg.includes('This socket has been ended');
@@ -1085,24 +1086,24 @@ process.on('uncaughtException', (err) => {
     console.log('[FATAL] Known network/protocol error - recovering gracefully...');
   }
 
-  if (config.utils['auto-reconnect']) {
-    clearAllIntervals();
-    botState.connected = false;
+  // ALWAYS recover — bot must never stay disconnected
+  clearAllIntervals();
+  botState.connected = false;
 
-    // FIX: reset isReconnecting if it was stuck, then schedule reconnect
-    if (isReconnecting) {
-      console.log('[FATAL] isReconnecting was stuck - resetting before crash recovery');
-      isReconnecting = false;
-      if (reconnectTimeout) {
-        clearTimeout(reconnectTimeout);
-        reconnectTimeout = null;
-      }
+  // FIX: reset isReconnecting if it was stuck, then schedule reconnect
+  if (isReconnecting) {
+    console.log('[FATAL] isReconnecting was stuck - resetting before crash recovery');
+    isReconnecting = false;
+    // BUG FIX: was referencing non-existent 'reconnectTimeout' — correct name is 'reconnectTimeoutId'
+    if (reconnectTimeoutId) {
+      clearTimeout(reconnectTimeoutId);
+      reconnectTimeoutId = null;
     }
-
-    setTimeout(() => {
-      scheduleReconnect();
-    }, isNetworkError ? 5000 : 10000);
   }
+
+  setTimeout(() => {
+    scheduleReconnect();
+  }, isNetworkError ? 5000 : 10000);
 });
 
 process.on('unhandledRejection', (reason) => {
@@ -1111,13 +1112,11 @@ process.on('unhandledRejection', (reason) => {
 });
 
 process.on('SIGTERM', () => {
-  console.log('[System] SIGTERM received.');
-  process.exit(0);
+  console.log('[System] SIGTERM received — ignoring, bot will stay alive.');
 });
 
 process.on('SIGINT', () => {
-  console.log('[System] Manual stop requested. Exiting...');
-  process.exit(0);
+  console.log('[System] SIGINT received — ignoring, bot will stay alive.');
 });
 
 // ============================================================
