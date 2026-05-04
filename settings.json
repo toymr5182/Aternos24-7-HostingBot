@@ -1,12 +1,12 @@
 {
   "name": "AFK Bot",
   "bot-account": {
-    "username": "Serloss_Botafk",
-    "password": "",
+    "username": "SerlossM",
+    "password": "A12345",
     "type": "offline"
   },
   "server": {
-    "ip": "serloss.falixsrv.me",
+    "ip": "play.amorycraft.com",
     "port": 22631,
     "version": "",
     "try-creative": false
@@ -27,13 +27,11 @@
       "sneak": true
     },
     "chat-messages": {
-      "enabled": true,
+      "enabled": false,
       "repeat": true,
       "repeat-delay": 120,
       "messages": [
         "วู้ววว",
-        "วันนี้เป็นวันนี้ใช่ไหม",
-        "ให้ฉันเดินนน"
       ]
     },
     "chat-log": true,
