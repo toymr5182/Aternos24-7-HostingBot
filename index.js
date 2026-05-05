@@ -1,16 +1,10 @@
 const mineflayer = require('mineflayer')
+const readline = require('readline')
 const express = require('express')
-const http = require('http')
-const { Server } = require('socket.io')
 
-const app = express()
-const server = http.createServer(app)
-const io = new Server(server)
-
-app.use(express.json())
-
-let bot = null
-let reconnectTimer = null
+let bot
+let rl
+let afkInterval
 
 const config = {
   host: 'play.amorycraft.com',
@@ -19,7 +13,8 @@ const config = {
 }
 
 const state = {
-  status: 'offline',
+  status: 'starting',
+  autoJump: true,
   lastMessage: '-',
   connectedAt: null
 }
@@ -34,35 +29,63 @@ function stringifyMsg(msg) {
   }
 }
 
-function uptime() {
+function getUptime() {
   if (!state.connectedAt) return '-'
+
   const sec = Math.floor((Date.now() - state.connectedAt) / 1000)
   const h = Math.floor(sec / 3600)
   const m = Math.floor((sec % 3600) / 60)
   const s = sec % 60
+
   return `${h}h ${m}m ${s}s`
 }
 
-function update(msg) {
-  if (msg) state.lastMessage = msg
+function splitMessage(text, width = 42) {
+  const msg = String(text || '')
+  const lines = []
 
-  io.emit('state', {
-    ...state,
-    uptime: uptime(),
-    config
-  })
+  for (let i = 0; i < msg.length; i += width) {
+    lines.push(msg.slice(i, i + width))
+  }
+
+  while (lines.length < 2) lines.push('')
+
+  return lines.slice(0, 2)
+}
+
+function draw() {
+  if (!rl) return
+
+  process.stdout.write('\x1Bc')
+
+  const lines = splitMessage(state.lastMessage, 42)
+
+  console.log('┌────────────────────────────────────────────┐')
+  console.log('│              MINECRAFT AFK BOT             │')
+  console.log('├────────────────────────────────────────────┤')
+  console.log(`│ STATUS    : ${state.status}`.padEnd(45) + '│')
+  console.log(`│ SERVER    : ${config.host}:${config.port}`.padEnd(45) + '│')
+  console.log(`│ USERNAME  : ${config.username}`.padEnd(45) + '│')
+  console.log(`│ UPTIME    : ${getUptime()}`.padEnd(45) + '│')
+  console.log(`│ AUTO JUMP : ${state.autoJump ? 'ON' : 'OFF'}`.padEnd(45) + '│')
+  console.log('├────────────────────────────────────────────┤')
+  console.log(`│ ${lines[0]}`.padEnd(45) + '│')
+  console.log(`│ ${lines[1]}`.padEnd(45) + '│')
+  console.log('└────────────────────────────────────────────┘')
+
+  rl.prompt(true)
+}
+
+function setMessage(msg) {
+  state.lastMessage = msg
+  draw()
 }
 
 function createBot() {
-  if (reconnectTimer) clearTimeout(reconnectTimer)
-
-  if (bot) {
-    try { bot.quit() } catch {}
-    bot = null
-  }
+  if (afkInterval) clearInterval(afkInterval)
 
   state.status = 'connecting'
-  update('กำลังเชื่อมต่อ...')
+  draw()
 
   bot = mineflayer.createBot({
     host: config.host,
@@ -74,170 +97,214 @@ function createBot() {
   bot.once('spawn', () => {
     state.status = 'online'
     state.connectedAt = Date.now()
-    update('เข้าเซิร์ฟแล้ว')
+    setMessage('เข้าเซิร์ฟแล้ว')
 
     setTimeout(() => {
-      if (!bot) return
-      bot.chat('/login a12345')
-      update('ส่ง /login a12345')
+      if (bot) {
+        bot.chat('/smp')
+        setMessage('รันคำสั่งอัตโนมัติ: /smp')
+      }
     }, 2500)
-
-    setTimeout(() => {
-      if (!bot) return
-      bot.chat('/smp')
-      update('ส่ง /smp')
-    }, 4500)
   })
 
   bot.on('chat', (username, message) => {
     if (username === bot.username) return
-    update(`${username}: ${message}`)
+    setMessage(`[CHAT] ${username}: ${message}`)
   })
 
   bot.on('whisper', (username, message) => {
     if (username === bot.username) return
-    update(`[WHISPER] ${username}: ${message}`)
+    setMessage(`[WHISPER] ${username}: ${message}`)
   })
 
   bot.on('message', (jsonMsg) => {
-    update(stringifyMsg(jsonMsg))
+    setMessage(`[SERVER] ${stringifyMsg(jsonMsg)}`)
   })
 
   bot.on('messagestr', (msg) => {
-    update(msg)
+    setMessage(`[RAW] ${msg}`)
   })
+
+  afkInterval = setInterval(() => {
+    if (!bot?.entity || !state.autoJump) return
+
+    bot.setControlState('jump', true)
+
+    setTimeout(() => {
+      if (bot) bot.setControlState('jump', false)
+    }, 400)
+  }, 30000)
 
   bot.on('kicked', (reason) => {
     state.status = 'kicked'
-    update(`KICKED: ${stringifyMsg(reason)}`)
+    setMessage(`[KICKED] ${stringifyMsg(reason)}`)
   })
 
   bot.on('end', () => {
     state.status = 'offline'
-    update('หลุดจากเซิร์ฟ กำลัง reconnect...')
-    reconnectTimer = setTimeout(createBot, 5000)
+    setMessage('หลุดจากเซิร์ฟ กำลัง reconnect ใน 5 วินาที...')
+    setTimeout(createBot, 5000)
   })
 
   bot.on('error', (err) => {
     state.status = 'error'
-    update(`ERROR: ${err?.message || String(err)}`)
+    setMessage(`[ERROR] ${err?.message || String(err)}`)
   })
 }
+
+/* ===========================
+   WEB DASHBOARD FOR RENDER
+=========================== */
+
+const app = express()
+app.use(express.urlencoded({ extended: true }))
 
 app.get('/', (req, res) => {
   res.send(`
-<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<title>Minecraft Bot Dashboard</title>
-<style>
-body{font-family:sans-serif;padding:20px;max-width:900px;margin:auto}
-input,button{padding:8px;margin:4px}
-#log{border:1px solid #ccc;padding:10px;height:160px;overflow:auto;white-space:pre-wrap}
-</style>
-</head>
-<body>
-<h2>Minecraft AFK Bot Dashboard</h2>
+    <html>
+    <head>
+      <title>AFK Bot Dashboard</title>
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
+      <style>
+        body{
+          font-family: Arial;
+          max-width: 700px;
+          margin: 30px auto;
+          padding: 20px;
+        }
+        input,button{
+          padding:10px;
+          font-size:16px;
+        }
+        .box{
+          border:1px solid #ccc;
+          padding:15px;
+          margin-bottom:15px;
+          border-radius:8px;
+        }
+      </style>
+    </head>
+    <body>
+      <h2>Minecraft AFK Bot</h2>
 
-<div>
-  <b>Status:</b> <span id="status">-</span><br>
-  <b>Uptime:</b> <span id="uptime">-</span><br>
-  <b>Last:</b> <span id="last">-</span>
-</div>
+      <div class="box">
+        <b>Status:</b> ${state.status}<br>
+        <b>Server:</b> ${config.host}:${config.port}<br>
+        <b>Username:</b> ${config.username}<br>
+        <b>Uptime:</b> ${getUptime()}<br>
+        <b>Auto Jump:</b> ${state.autoJump ? 'ON' : 'OFF'}<br>
+        <b>Last Message:</b><br>${state.lastMessage}
+      </div>
 
-<hr>
+      <div class="box">
+        <form method="POST" action="/command">
+          <input name="cmd" placeholder="พิมพ์คำสั่ง..." style="width:70%" />
+          <button type="submit">Send</button>
+        </form>
+      </div>
 
-<h3>Bot Settings</h3>
-<input id="host" placeholder="Host">
-<input id="port" placeholder="Port">
-<input id="username" placeholder="Username">
-<button onclick="save()">Save & Reconnect</button>
+      <div class="box">
+        <form method="POST" action="/afk/on" style="display:inline;">
+          <button type="submit">AFK ON</button>
+        </form>
 
-<hr>
+        <form method="POST" action="/afk/off" style="display:inline;">
+          <button type="submit">AFK OFF</button>
+        </form>
 
-<h3>Send Command</h3>
-<input id="cmd" placeholder="/login ... หรือข้อความแชท" style="width:60%">
-<button onclick="sendCmd()">Send</button>
-
-<hr>
-
-<div id="log"></div>
-
-<script src="/socket.io/socket.io.js"></script>
-<script>
-const socket = io()
-
-socket.on('state', s => {
-  document.getElementById('status').textContent = s.status
-  document.getElementById('uptime').textContent = s.uptime
-  document.getElementById('last').textContent = s.lastMessage
-
-  document.getElementById('host').value = s.config.host
-  document.getElementById('port').value = s.config.port
-  document.getElementById('username').value = s.config.username
-
-  const log = document.getElementById('log')
-  log.textContent += s.lastMessage + "\\n"
-  log.scrollTop = log.scrollHeight
-})
-
-function sendCmd() {
-  fetch('/command', {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({
-      command: document.getElementById('cmd').value
-    })
-  })
-  document.getElementById('cmd').value = ''
-}
-
-function save() {
-  fetch('/config', {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({
-      host: document.getElementById('host').value,
-      port: document.getElementById('port').value,
-      username: document.getElementById('username').value
-    })
-  })
-}
-</script>
-</body>
-</html>
-`)
+        <form method="POST" action="/reconnect" style="display:inline;">
+          <button type="submit">Reconnect</button>
+        </form>
+      </div>
+    </body>
+    </html>
+  `)
 })
 
 app.post('/command', (req, res) => {
-  const cmd = (req.body.command || '').trim()
+  const msg = String(req.body.cmd || '').trim()
 
-  if (cmd && bot) {
-    bot.chat(cmd)
-    update('ส่งคำสั่ง: ' + cmd)
+  if (msg && bot && bot.chat) {
+    bot.chat(msg)
+    setMessage(`ส่งข้อความ: ${msg}`)
   }
 
-  res.json({ ok: true })
+  res.redirect('/')
 })
 
-app.post('/config', (req, res) => {
-  config.host = req.body.host || config.host
-  config.port = Number(req.body.port || config.port)
-  config.username = req.body.username || config.username
+app.post('/afk/on', (req, res) => {
+  state.autoJump = true
+  setMessage('เปิด auto jump แล้ว')
+  res.redirect('/')
+})
 
+app.post('/afk/off', (req, res) => {
+  state.autoJump = false
+  setMessage('ปิด auto jump แล้ว')
+  res.redirect('/')
+})
+
+app.post('/reconnect', (req, res) => {
+  try {
+    bot.end()
+  } catch {}
   createBot()
-
-  res.json({ ok: true })
-})
-
-io.on('connection', socket => {
-  update()
+  res.redirect('/')
 })
 
 const PORT = process.env.PORT || 3000
-
-server.listen(PORT, () => {
-  console.log('Dashboard running on port', PORT)
-  createBot()
+app.listen(PORT, () => {
+  console.log(`Web dashboard running on port ${PORT}`)
 })
+
+/* ===========================
+   LOCAL TERMINAL ONLY
+=========================== */
+
+if (!process.env.RENDER) {
+  rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+    prompt: '> '
+  })
+
+  rl.on('line', (line) => {
+    const msg = line.trim()
+
+    if (!msg) {
+      draw()
+      return
+    }
+
+    if (msg === '/afk on') {
+      state.autoJump = true
+      setMessage('เปิด auto jump แล้ว')
+      return
+    }
+
+    if (msg === '/afk off') {
+      state.autoJump = false
+      setMessage('ปิด auto jump แล้ว')
+      return
+    }
+
+    if (msg === '/reconnect') {
+      try {
+        bot.end()
+      } catch {}
+      createBot()
+      return
+    }
+
+    if (bot && bot.chat) {
+      bot.chat(msg)
+      setMessage(`ส่งข้อความ: ${msg}`)
+    }
+
+    draw()
+  })
+
+  draw()
+}
+
+createBot()
