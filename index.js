@@ -26,8 +26,23 @@ const state = {
 
 function stringifyMsg(msg) {
   try {
+    if (!msg) return 'Unknown message'
+
     if (typeof msg === 'string') return msg
-    if (msg && typeof msg.toString === 'function') return msg.toString()
+
+    if (typeof msg.toAnsi === 'function') return msg.toAnsi()
+
+    if (typeof msg.toString === 'function') {
+      const s = msg.toString()
+      if (s && s !== '[object Object]') return s
+    }
+
+    if (msg.text) return msg.text
+
+    if (Array.isArray(msg.extra)) {
+      return msg.extra.map(x => x.text || '').join('')
+    }
+
     return JSON.stringify(msg)
   } catch {
     return 'Unknown message'
@@ -36,10 +51,12 @@ function stringifyMsg(msg) {
 
 function uptime() {
   if (!state.connectedAt) return '-'
+
   const sec = Math.floor((Date.now() - state.connectedAt) / 1000)
   const h = Math.floor(sec / 3600)
   const m = Math.floor((sec % 3600) / 60)
   const s = sec % 60
+
   return `${h}h ${m}m ${s}s`
 }
 
@@ -68,7 +85,7 @@ function createBot() {
     host: config.host,
     port: config.port,
     username: config.username,
-    version: false
+    version: '1.21.1'
   })
 
   bot.once('spawn', () => {
@@ -231,7 +248,7 @@ app.post('/config', (req, res) => {
   res.json({ ok: true })
 })
 
-io.on('connection', socket => {
+io.on('connection', () => {
   update()
 })
 
