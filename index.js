@@ -10,6 +10,7 @@ const io = new Server(server)
 app.use(express.json())
 
 let bot = null
+let afkInterval = null
 let reconnectTimer = null
 
 const config = {
@@ -20,7 +21,8 @@ const config = {
 }
 
 const state = {
-  status: 'offline',
+  status: 'starting',
+  autoJump: true,
   lastMessage: '-',
   connectedAt: null
 }
@@ -36,21 +38,12 @@ function cleanText(text) {
 
 function stringifyMsg(msg) {
   try {
-    if (!msg) return 'Unknown message'
+    if (typeof msg === 'string') return cleanText(msg)
+    if (msg?.text) return cleanText(msg.text)
 
-    if (typeof msg === 'string') {
-      return cleanText(msg)
-    }
-
-    if (msg.text) {
-      return cleanText(msg.text)
-    }
-
-    if (typeof msg.toString === 'function') {
-      const txt = msg.toString()
-      if (txt && txt !== '[object Object]') {
-        return cleanText(txt)
-      }
+    if (msg && typeof msg.toString === 'function') {
+      const t = msg.toString()
+      if (t && t !== '[object Object]') return cleanText(t)
     }
 
     return cleanText(JSON.stringify(msg))
@@ -59,7 +52,7 @@ function stringifyMsg(msg) {
   }
 }
 
-function uptime() {
+function getUptime() {
   if (!state.connectedAt) return '-'
 
   const sec = Math.floor((Date.now() - state.connectedAt) / 1000)
@@ -78,24 +71,19 @@ function update(msg) {
 
   io.emit('state', {
     ...state,
-    uptime: uptime(),
+    uptime: getUptime(),
     config
   })
 }
 
 function scheduleReconnect(delay = 8000) {
   if (reconnectTimer) clearTimeout(reconnectTimer)
-
-  reconnectTimer = setTimeout(() => {
-    createBot()
-  }, delay)
+  reconnectTimer = setTimeout(createBot, delay)
 }
 
 function createBot() {
-  if (reconnectTimer) {
-    clearTimeout(reconnectTimer)
-    reconnectTimer = null
-  }
+  if (reconnectTimer) clearTimeout(reconnectTimer)
+  if (afkInterval) clearInterval(afkInterval)
 
   if (bot) {
     try {
@@ -118,7 +106,7 @@ function createBot() {
     })
   } catch (err) {
     state.status = 'error'
-    update('ERROR: ' + (err?.message || String(err)))
+    update(`ERROR: ${err.message}`)
     scheduleReconnect()
     return
   }
@@ -129,21 +117,21 @@ function createBot() {
     update('เข้าเซิร์ฟแล้ว')
 
     setTimeout(() => {
-      if (!bot || !bot.entity) return
+      if (!bot?.entity) return
       bot.chat('/login a12345')
-      update('ส่ง /login a12345')
+      update('รันคำสั่งอัตโนมัติ: /login a12345')
     }, 5000)
 
     setTimeout(() => {
-      if (!bot || !bot.entity) return
+      if (!bot?.entity) return
       bot.chat('/smp')
-      update('ส่ง /smp')
+      update('รันคำสั่งอัตโนมัติ: /smp')
     }, 10000)
   })
 
   bot.on('chat', (username, message) => {
     if (username === bot.username) return
-    update(`${username}: ${message}`)
+    update(`[CHAT] ${username}: ${message}`)
   })
 
   bot.on('whisper', (username, message) => {
@@ -152,16 +140,26 @@ function createBot() {
   })
 
   bot.on('message', (jsonMsg) => {
-    update(stringifyMsg(jsonMsg))
+    update(`[SERVER] ${stringifyMsg(jsonMsg)}`)
   })
 
   bot.on('messagestr', (msg) => {
-    update(cleanText(msg))
+    update(`[RAW] ${cleanText(msg)}`)
   })
+
+  afkInterval = setInterval(() => {
+    if (!bot?.entity || !state.autoJump) return
+
+    bot.setControlState('jump', true)
+
+    setTimeout(() => {
+      if (bot) bot.setControlState('jump', false)
+    }, 400)
+  }, 30000)
 
   bot.on('kicked', (reason) => {
     state.status = 'kicked'
-    update(`KICKED: ${stringifyMsg(reason)}`)
+    update(`[KICKED] ${stringifyMsg(reason)}`)
   })
 
   bot.on('end', () => {
@@ -172,7 +170,7 @@ function createBot() {
 
   bot.on('error', (err) => {
     state.status = 'error'
-    update(`ERROR: ${err?.message || String(err)}`)
+    update(`[ERROR] ${err?.message || String(err)}`)
   })
 }
 
@@ -195,6 +193,7 @@ input,button{padding:8px;margin:4px}
 <div>
   <b>Status:</b> <span id="status">-</span><br>
   <b>Uptime:</b> <span id="uptime">-</span><br>
+  <b>Auto Jump:</b> <span id="afk">-</span><br>
   <b>Last:</b> <span id="last">-</span>
 </div>
 
@@ -214,6 +213,12 @@ input,button{padding:8px;margin:4px}
 
 <hr>
 
+<button onclick="toggleAfk(true)">AFK ON</button>
+<button onclick="toggleAfk(false)">AFK OFF</button>
+<button onclick="reconnect()">Reconnect</button>
+
+<hr>
+
 <div id="log"></div>
 
 <script src="/socket.io/socket.io.js"></script>
@@ -224,6 +229,7 @@ let lastLine = ''
 socket.on('state', s => {
   document.getElementById('status').textContent = s.status
   document.getElementById('uptime').textContent = s.uptime
+  document.getElementById('afk').textContent = s.autoJump ? 'ON' : 'OFF'
   document.getElementById('last').textContent = s.lastMessage
 
   document.getElementById('host').value = s.config.host
@@ -246,7 +252,6 @@ function sendCmd() {
       command: document.getElementById('cmd').value
     })
   })
-
   document.getElementById('cmd').value = ''
 }
 
@@ -261,6 +266,18 @@ function save() {
     })
   })
 }
+
+function toggleAfk(value) {
+  fetch('/afk', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ value })
+  })
+}
+
+function reconnect() {
+  fetch('/reconnect', { method:'POST' })
+}
 </script>
 </body>
 </html>
@@ -268,11 +285,11 @@ function save() {
 })
 
 app.post('/command', (req, res) => {
-  const cmd = (req.body.command || '').trim()
+  const cmd = String(req.body.command || '').trim()
 
   if (cmd && bot) {
     bot.chat(cmd)
-    update('ส่งคำสั่ง: ' + cmd)
+    update(`ส่งข้อความ: ${cmd}`)
   }
 
   res.json({ ok: true })
@@ -285,6 +302,17 @@ app.post('/config', (req, res) => {
 
   createBot()
 
+  res.json({ ok: true })
+})
+
+app.post('/afk', (req, res) => {
+  state.autoJump = !!req.body.value
+  update(state.autoJump ? 'เปิด auto jump แล้ว' : 'ปิด auto jump แล้ว')
+  res.json({ ok: true })
+})
+
+app.post('/reconnect', (req, res) => {
+  createBot()
   res.json({ ok: true })
 })
 
