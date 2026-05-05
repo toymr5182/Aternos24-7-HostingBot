@@ -120,22 +120,23 @@ function createBot() {
     update(`[WHISPER] ${username}: ${message}`)
   })
 
+  bot.on('message', (jsonMsg) => {
+    update(stringifyMsg(jsonMsg))
+  })
+
   bot.on('messagestr', (msg) => {
     update(msg)
   })
 
-  bot.on('message', (msg) => {
-    update(stringifyMsg(msg))
-  })
-
   bot.on('kicked', (reason) => {
     connecting = false
-    const msg = stringifyMsg(reason)
-
     state.status = 'kicked'
+
+    const msg = stringifyMsg(reason)
     update(`KICKED: ${msg}`)
 
     if (msg.includes('already connected')) {
+      update('ยังมี session เก่าค้างอยู่ รอ reconnect 15 วินาที...')
       scheduleReconnect(15000)
     }
   })
@@ -164,16 +165,16 @@ app.get('/', (req, res) => {
 <style>
 body{font-family:sans-serif;padding:20px;max-width:900px;margin:auto}
 input,button{padding:8px;margin:4px}
-#log{border:1px solid #ccc;padding:10px;height:220px;overflow:auto;white-space:pre-wrap}
+#log{border:1px solid #ccc;padding:10px;height:160px;overflow:auto;white-space:pre-wrap}
 </style>
 </head>
 <body>
 <h2>Minecraft AFK Bot Dashboard</h2>
 
 <div>
-<b>Status:</b> <span id="status">-</span><br>
-<b>Uptime:</b> <span id="uptime">-</span><br>
-<b>Last:</b> <span id="last">-</span>
+  <b>Status:</b> <span id="status">-</span><br>
+  <b>Uptime:</b> <span id="uptime">-</span><br>
+  <b>Last:</b> <span id="last">-</span>
 </div>
 
 <hr>
