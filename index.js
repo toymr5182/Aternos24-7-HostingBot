@@ -1,9 +1,15 @@
 const mineflayer = require('mineflayer')
-const readline = require('readline')
+const express = require('express')
+const http = require('http')
+const { Server } = require('socket.io')
 
-let bot
-let rl
-let afkInterval
+const app = express()
+const server = http.createServer(app)
+const io = new Server(server)
+
+app.use(express.json())
+
+let bot = null
 let reconnectTimer = null
 let connecting = false
 
@@ -12,6 +18,12 @@ const config = {
   port: 25565,
   username: 'EERTO',
   version: '1.21.11'
+}
+
+const state = {
+  status: 'offline',
+  lastMessage: '-',
+  connectedAt: null
 }
 
 function stringifyMsg(msg) {
@@ -24,16 +36,23 @@ function stringifyMsg(msg) {
   }
 }
 
-function log(msg) {
-  if (!rl) {
-    process.stdout.write(msg + '\n')
-    return
-  }
+function uptime() {
+  if (!state.connectedAt) return '-'
+  const sec = Math.floor((Date.now() - state.connectedAt) / 1000)
+  const h = Math.floor(sec / 3600)
+  const m = Math.floor((sec % 3600) / 60)
+  const s = sec % 60
+  return `${h}h ${m}m ${s}s`
+}
 
-  readline.clearLine(process.stdout, 0)
-  readline.cursorTo(process.stdout, 0)
-  process.stdout.write(msg + '\n')
-  rl.prompt(true)
+function update(msg) {
+  if (msg) state.lastMessage = msg
+
+  io.emit('state', {
+    ...state,
+    uptime: uptime(),
+    config
+  })
 }
 
 function scheduleReconnect(delay = 10000) {
@@ -49,8 +68,6 @@ function createBot() {
   if (connecting) return
   connecting = true
 
-  if (afkInterval) clearInterval(afkInterval)
-
   if (reconnectTimer) {
     clearTimeout(reconnectTimer)
     reconnectTimer = null
@@ -64,106 +81,197 @@ function createBot() {
     bot = null
   }
 
-  log('[BOT] กำลังเชื่อมต่อ...')
+  state.status = 'connecting'
+  update('กำลังเชื่อมต่อ...')
 
   bot = mineflayer.createBot({
     host: config.host,
-    port: config.port,
+    port: Number(config.port),
     username: config.username,
     version: config.version
   })
 
   bot.once('spawn', () => {
     connecting = false
-    log('[BOT] เข้าเซิร์ฟแล้ว')
+    state.status = 'online'
+    state.connectedAt = Date.now()
+    update('เข้าเซิร์ฟแล้ว')
 
     setTimeout(() => {
       if (!bot) return
       bot.chat('/login a12345')
-      log('[SEND] /login a12345')
+      update('ส่ง /login a12345')
     }, 2500)
 
     setTimeout(() => {
       if (!bot) return
       bot.chat('/smp')
-      log('[SEND] /smp')
+      update('ส่ง /smp')
     }, 4500)
   })
 
   bot.on('chat', (username, message) => {
     if (username === bot.username) return
-    log(`[CHAT] ${username}: ${message}`)
+    update(`${username}: ${message}`)
   })
 
   bot.on('whisper', (username, message) => {
     if (username === bot.username) return
-    log(`[WHISPER] ${username}: ${message}`)
-  })
-
-  bot.on('message', (jsonMsg) => {
-    log(`[SERVER] ${stringifyMsg(jsonMsg)}`)
+    update(`[WHISPER] ${username}: ${message}`)
   })
 
   bot.on('messagestr', (msg) => {
-    log(`[RAW] ${msg}`)
+    update(msg)
   })
 
-  afkInterval = setInterval(() => {
-    if (!bot?.entity) return
-
-    bot.setControlState('jump', true)
-
-    setTimeout(() => {
-      if (bot) bot.setControlState('jump', false)
-    }, 400)
-  }, 30000)
+  bot.on('message', (msg) => {
+    update(stringifyMsg(msg))
+  })
 
   bot.on('kicked', (reason) => {
     connecting = false
-
     const msg = stringifyMsg(reason)
-    log(`[KICKED] ${msg}`)
+
+    state.status = 'kicked'
+    update(`KICKED: ${msg}`)
 
     if (msg.includes('already connected')) {
-      log('[BOT] ยังมี session เก่าค้างอยู่ รอ reconnect 15 วินาที...')
       scheduleReconnect(15000)
     }
   })
 
   bot.on('end', () => {
     connecting = false
-    log('[BOT] หลุดจากเซิร์ฟ กำลัง reconnect...')
+    state.status = 'offline'
+    update('หลุดจากเซิร์ฟ กำลัง reconnect...')
     scheduleReconnect(10000)
   })
 
   bot.on('error', (err) => {
     connecting = false
-    log(`[ERROR] ${err?.message || String(err)}`)
+    state.status = 'error'
+    update(`ERROR: ${err?.message || String(err)}`)
   })
 }
 
-rl = readline.createInterface({
-  input: process.stdin,
-  output: process.stdout,
-  prompt: '> '
+app.get('/', (req, res) => {
+  res.send(`
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Minecraft Bot Dashboard</title>
+<style>
+body{font-family:sans-serif;padding:20px;max-width:900px;margin:auto}
+input,button{padding:8px;margin:4px}
+#log{border:1px solid #ccc;padding:10px;height:220px;overflow:auto;white-space:pre-wrap}
+</style>
+</head>
+<body>
+<h2>Minecraft AFK Bot Dashboard</h2>
+
+<div>
+<b>Status:</b> <span id="status">-</span><br>
+<b>Uptime:</b> <span id="uptime">-</span><br>
+<b>Last:</b> <span id="last">-</span>
+</div>
+
+<hr>
+
+<h3>Bot Settings</h3>
+<input id="host" placeholder="Host">
+<input id="port" placeholder="Port">
+<input id="username" placeholder="Username">
+<input id="version" placeholder="Version">
+<button onclick="save()">Save & Reconnect</button>
+
+<hr>
+
+<h3>Send Command</h3>
+<input id="cmd" placeholder="/login ... หรือข้อความแชท" style="width:60%">
+<button onclick="sendCmd()">Send</button>
+
+<hr>
+
+<div id="log"></div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+const socket = io()
+
+socket.on('state', s => {
+  document.getElementById('status').textContent = s.status
+  document.getElementById('uptime').textContent = s.uptime
+  document.getElementById('last').textContent = s.lastMessage
+
+  document.getElementById('host').value = s.config.host
+  document.getElementById('port').value = s.config.port
+  document.getElementById('username').value = s.config.username
+  document.getElementById('version').value = s.config.version
+
+  const log = document.getElementById('log')
+  log.textContent += s.lastMessage + "\\n"
+  log.scrollTop = log.scrollHeight
 })
 
-rl.prompt()
+function sendCmd() {
+  fetch('/command', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({
+      command: document.getElementById('cmd').value
+    })
+  })
+  document.getElementById('cmd').value = ''
+}
 
-rl.on('line', (line) => {
-  const msg = line.trim()
-
-  if (!msg) {
-    rl.prompt()
-    return
-  }
-
-  if (bot && bot.chat) {
-    bot.chat(msg)
-    log(`[SEND] ${msg}`)
-  }
-
-  rl.prompt()
+function save() {
+  fetch('/config', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({
+      host: document.getElementById('host').value,
+      port: document.getElementById('port').value,
+      username: document.getElementById('username').value,
+      version: document.getElementById('version').value
+    })
+  })
+}
+</script>
+</body>
+</html>
+`)
 })
 
-createBot()
+app.post('/command', (req, res) => {
+  const cmd = (req.body.command || '').trim()
+
+  if (cmd && bot) {
+    bot.chat(cmd)
+    update('ส่งคำสั่ง: ' + cmd)
+  }
+
+  res.json({ ok: true })
+})
+
+app.post('/config', (req, res) => {
+  config.host = req.body.host || config.host
+  config.port = Number(req.body.port || config.port)
+  config.username = req.body.username || config.username
+  config.version = req.body.version || config.version
+
+  createBot()
+
+  res.json({ ok: true })
+})
+
+io.on('connection', () => {
+  update()
+})
+
+const PORT = process.env.PORT || 3000
+
+server.listen(PORT, () => {
+  console.log('Dashboard running on port', PORT)
+  createBot()
+})
