@@ -11,11 +11,13 @@ app.use(express.json())
 
 let bot = null
 let reconnectTimer = null
+let connecting = false
 
 const config = {
   host: 'play.amorycraft.com',
   port: 25565,
-  username: 'EERTO'
+  username: 'EERTO',
+  version: '1.21.11'
 }
 
 const state = {
@@ -53,11 +55,29 @@ function update(msg) {
   })
 }
 
+function scheduleReconnect(delay = 10000) {
+  if (reconnectTimer) return
+
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null
+    createBot()
+  }, delay)
+}
+
 function createBot() {
-  if (reconnectTimer) clearTimeout(reconnectTimer)
+  if (connecting) return
+  connecting = true
+
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer)
+    reconnectTimer = null
+  }
 
   if (bot) {
-    try { bot.quit() } catch {}
+    try {
+      bot.removeAllListeners()
+      bot.quit()
+    } catch {}
     bot = null
   }
 
@@ -68,10 +88,11 @@ function createBot() {
     host: config.host,
     port: config.port,
     username: config.username,
-    version: false
+    version: config.version
   })
 
   bot.once('spawn', () => {
+    connecting = false
     state.status = 'online'
     state.connectedAt = Date.now()
     update('เข้าเซิร์ฟแล้ว')
@@ -108,17 +129,27 @@ function createBot() {
   })
 
   bot.on('kicked', (reason) => {
+    connecting = false
     state.status = 'kicked'
-    update(`KICKED: ${stringifyMsg(reason)}`)
+
+    const msg = stringifyMsg(reason)
+    update(`KICKED: ${msg}`)
+
+    if (msg.includes('already connected')) {
+      update('ยังมี session เก่าค้างอยู่ รอ reconnect 15 วินาที...')
+      scheduleReconnect(15000)
+    }
   })
 
   bot.on('end', () => {
+    connecting = false
     state.status = 'offline'
     update('หลุดจากเซิร์ฟ กำลัง reconnect...')
-    reconnectTimer = setTimeout(createBot, 5000)
+    scheduleReconnect(10000)
   })
 
   bot.on('error', (err) => {
+    connecting = false
     state.status = 'error'
     update(`ERROR: ${err?.message || String(err)}`)
   })
@@ -134,16 +165,16 @@ app.get('/', (req, res) => {
 <style>
 body{font-family:sans-serif;padding:20px;max-width:900px;margin:auto}
 input,button{padding:8px;margin:4px}
-#log{border:1px solid #ccc;padding:10px;height:160px;overflow:auto;white-space:pre-wrap}
+#log{border:1px solid #ccc;padding:10px;height:220px;overflow:auto;white-space:pre-wrap}
 </style>
 </head>
 <body>
 <h2>Minecraft AFK Bot Dashboard</h2>
 
 <div>
-  <b>Status:</b> <span id="status">-</span><br>
-  <b>Uptime:</b> <span id="uptime">-</span><br>
-  <b>Last:</b> <span id="last">-</span>
+<b>Status:</b> <span id="status">-</span><br>
+<b>Uptime:</b> <span id="uptime">-</span><br>
+<b>Last:</b> <span id="last">-</span>
 </div>
 
 <hr>
@@ -152,6 +183,7 @@ input,button{padding:8px;margin:4px}
 <input id="host" placeholder="Host">
 <input id="port" placeholder="Port">
 <input id="username" placeholder="Username">
+<input id="version" placeholder="Version">
 <button onclick="save()">Save & Reconnect</button>
 
 <hr>
@@ -176,6 +208,7 @@ socket.on('state', s => {
   document.getElementById('host').value = s.config.host
   document.getElementById('port').value = s.config.port
   document.getElementById('username').value = s.config.username
+  document.getElementById('version').value = s.config.version
 
   const log = document.getElementById('log')
   log.textContent += s.lastMessage + "\\n"
@@ -200,7 +233,8 @@ function save() {
     body: JSON.stringify({
       host: document.getElementById('host').value,
       port: document.getElementById('port').value,
-      username: document.getElementById('username').value
+      username: document.getElementById('username').value,
+      version: document.getElementById('version').value
     })
   })
 }
@@ -225,13 +259,14 @@ app.post('/config', (req, res) => {
   config.host = req.body.host || config.host
   config.port = Number(req.body.port || config.port)
   config.username = req.body.username || config.username
+  config.version = req.body.version || config.version
 
   createBot()
 
   res.json({ ok: true })
 })
 
-io.on('connection', socket => {
+io.on('connection', () => {
   update()
 })
 
