@@ -11,13 +11,11 @@ app.use(express.json())
 
 let bot = null
 let reconnectTimer = null
-let connecting = false
 
 const config = {
   host: 'play.amorycraft.com',
   port: 25565,
-  username: 'EERTO',
-  version: '1.21.11'
+  username: 'EERTO'
 }
 
 const state = {
@@ -55,29 +53,11 @@ function update(msg) {
   })
 }
 
-function scheduleReconnect(delay = 10000) {
-  if (reconnectTimer) return
-
-  reconnectTimer = setTimeout(() => {
-    reconnectTimer = null
-    createBot()
-  }, delay)
-}
-
 function createBot() {
-  if (connecting) return
-  connecting = true
-
-  if (reconnectTimer) {
-    clearTimeout(reconnectTimer)
-    reconnectTimer = null
-  }
+  if (reconnectTimer) clearTimeout(reconnectTimer)
 
   if (bot) {
-    try {
-      bot.removeAllListeners()
-      bot.quit()
-    } catch {}
+    try { bot.quit() } catch {}
     bot = null
   }
 
@@ -86,13 +66,12 @@ function createBot() {
 
   bot = mineflayer.createBot({
     host: config.host,
-    port: Number(config.port),
+    port: config.port,
     username: config.username,
-    version: config.version
+    version: false
   })
 
   bot.once('spawn', () => {
-    connecting = false
     state.status = 'online'
     state.connectedAt = Date.now()
     update('เข้าเซิร์ฟแล้ว')
@@ -129,27 +108,17 @@ function createBot() {
   })
 
   bot.on('kicked', (reason) => {
-    connecting = false
     state.status = 'kicked'
-
-    const msg = stringifyMsg(reason)
-    update(`KICKED: ${msg}`)
-
-    if (msg.includes('already connected')) {
-      update('ยังมี session เก่าค้างอยู่ รอ reconnect 15 วินาที...')
-      scheduleReconnect(15000)
-    }
+    update(`KICKED: ${stringifyMsg(reason)}`)
   })
 
   bot.on('end', () => {
-    connecting = false
     state.status = 'offline'
     update('หลุดจากเซิร์ฟ กำลัง reconnect...')
-    scheduleReconnect(10000)
+    reconnectTimer = setTimeout(createBot, 5000)
   })
 
   bot.on('error', (err) => {
-    connecting = false
     state.status = 'error'
     update(`ERROR: ${err?.message || String(err)}`)
   })
@@ -183,7 +152,6 @@ input,button{padding:8px;margin:4px}
 <input id="host" placeholder="Host">
 <input id="port" placeholder="Port">
 <input id="username" placeholder="Username">
-<input id="version" placeholder="Version">
 <button onclick="save()">Save & Reconnect</button>
 
 <hr>
@@ -208,7 +176,6 @@ socket.on('state', s => {
   document.getElementById('host').value = s.config.host
   document.getElementById('port').value = s.config.port
   document.getElementById('username').value = s.config.username
-  document.getElementById('version').value = s.config.version
 
   const log = document.getElementById('log')
   log.textContent += s.lastMessage + "\\n"
@@ -233,8 +200,7 @@ function save() {
     body: JSON.stringify({
       host: document.getElementById('host').value,
       port: document.getElementById('port').value,
-      username: document.getElementById('username').value,
-      version: document.getElementById('version').value
+      username: document.getElementById('username').value
     })
   })
 }
@@ -259,14 +225,13 @@ app.post('/config', (req, res) => {
   config.host = req.body.host || config.host
   config.port = Number(req.body.port || config.port)
   config.username = req.body.username || config.username
-  config.version = req.body.version || config.version
 
   createBot()
 
   res.json({ ok: true })
 })
 
-io.on('connection', () => {
+io.on('connection', socket => {
   update()
 })
 
