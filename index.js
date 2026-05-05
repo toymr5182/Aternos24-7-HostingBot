@@ -15,7 +15,8 @@ let reconnectTimer = null
 const config = {
   host: 'play.amorycraft.com',
   port: 25565,
-  username: 'EERTO'
+  username: 'EERTO',
+  version: '1.21.11'
 }
 
 const state = {
@@ -24,26 +25,35 @@ const state = {
   connectedAt: null
 }
 
+function cleanText(text) {
+  if (!text) return ''
+  return String(text)
+    .replace(/\u00a7[0-9A-FK-OR]/gi, '')
+    .replace(/\x1b\[[0-9;]*m/g, '')
+    .replace(/\[[0-9;]*m/g, '')
+    .trim()
+}
+
 function stringifyMsg(msg) {
   try {
     if (!msg) return 'Unknown message'
 
-    if (typeof msg === 'string') return msg
+    if (typeof msg === 'string') {
+      return cleanText(msg)
+    }
 
-    if (typeof msg.toAnsi === 'function') return msg.toAnsi()
+    if (msg.text) {
+      return cleanText(msg.text)
+    }
 
     if (typeof msg.toString === 'function') {
-      const s = msg.toString()
-      if (s && s !== '[object Object]') return s
+      const txt = msg.toString()
+      if (txt && txt !== '[object Object]') {
+        return cleanText(txt)
+      }
     }
 
-    if (msg.text) return msg.text
-
-    if (Array.isArray(msg.extra)) {
-      return msg.extra.map(x => x.text || '').join('')
-    }
-
-    return JSON.stringify(msg)
+    return cleanText(JSON.stringify(msg))
   } catch {
     return 'Unknown message'
   }
@@ -61,7 +71,10 @@ function uptime() {
 }
 
 function update(msg) {
-  if (msg) state.lastMessage = msg
+  if (msg) {
+    state.lastMessage = cleanText(msg)
+    console.log(state.lastMessage)
+  }
 
   io.emit('state', {
     ...state,
@@ -70,23 +83,45 @@ function update(msg) {
   })
 }
 
-function createBot() {
+function scheduleReconnect(delay = 8000) {
   if (reconnectTimer) clearTimeout(reconnectTimer)
 
+  reconnectTimer = setTimeout(() => {
+    createBot()
+  }, delay)
+}
+
+function createBot() {
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer)
+    reconnectTimer = null
+  }
+
   if (bot) {
-    try { bot.quit() } catch {}
+    try {
+      bot.removeAllListeners()
+      bot.quit()
+    } catch {}
     bot = null
   }
 
   state.status = 'connecting'
+  state.connectedAt = null
   update('กำลังเชื่อมต่อ...')
 
-  bot = mineflayer.createBot({
-    host: config.host,
-    port: config.port,
-    username: config.username,
-    version: '1.21.1'
-  })
+  try {
+    bot = mineflayer.createBot({
+      host: config.host,
+      port: config.port,
+      username: config.username,
+      version: config.version
+    })
+  } catch (err) {
+    state.status = 'error'
+    update('ERROR: ' + (err?.message || String(err)))
+    scheduleReconnect()
+    return
+  }
 
   bot.once('spawn', () => {
     state.status = 'online'
@@ -94,16 +129,16 @@ function createBot() {
     update('เข้าเซิร์ฟแล้ว')
 
     setTimeout(() => {
-      if (!bot) return
+      if (!bot || !bot.entity) return
       bot.chat('/login a12345')
       update('ส่ง /login a12345')
-    }, 2500)
+    }, 5000)
 
     setTimeout(() => {
-      if (!bot) return
+      if (!bot || !bot.entity) return
       bot.chat('/smp')
       update('ส่ง /smp')
-    }, 4500)
+    }, 10000)
   })
 
   bot.on('chat', (username, message) => {
@@ -121,7 +156,7 @@ function createBot() {
   })
 
   bot.on('messagestr', (msg) => {
-    update(msg)
+    update(cleanText(msg))
   })
 
   bot.on('kicked', (reason) => {
@@ -132,7 +167,7 @@ function createBot() {
   bot.on('end', () => {
     state.status = 'offline'
     update('หลุดจากเซิร์ฟ กำลัง reconnect...')
-    reconnectTimer = setTimeout(createBot, 5000)
+    scheduleReconnect()
   })
 
   bot.on('error', (err) => {
@@ -151,7 +186,7 @@ app.get('/', (req, res) => {
 <style>
 body{font-family:sans-serif;padding:20px;max-width:900px;margin:auto}
 input,button{padding:8px;margin:4px}
-#log{border:1px solid #ccc;padding:10px;height:160px;overflow:auto;white-space:pre-wrap}
+#log{border:1px solid #ccc;padding:10px;height:220px;overflow:auto;white-space:pre-wrap}
 </style>
 </head>
 <body>
@@ -184,6 +219,7 @@ input,button{padding:8px;margin:4px}
 <script src="/socket.io/socket.io.js"></script>
 <script>
 const socket = io()
+let lastLine = ''
 
 socket.on('state', s => {
   document.getElementById('status').textContent = s.status
@@ -194,9 +230,12 @@ socket.on('state', s => {
   document.getElementById('port').value = s.config.port
   document.getElementById('username').value = s.config.username
 
-  const log = document.getElementById('log')
-  log.textContent += s.lastMessage + "\\n"
-  log.scrollTop = log.scrollHeight
+  if (lastLine !== s.lastMessage) {
+    lastLine = s.lastMessage
+    const log = document.getElementById('log')
+    log.textContent += s.lastMessage + "\\n"
+    log.scrollTop = log.scrollHeight
+  }
 })
 
 function sendCmd() {
@@ -207,6 +246,7 @@ function sendCmd() {
       command: document.getElementById('cmd').value
     })
   })
+
   document.getElementById('cmd').value = ''
 }
 
