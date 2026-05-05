@@ -17,7 +17,7 @@ const config = {
   host: 'play.amorycraft.com',
   port: 25565,
   username: 'EERTO',
-  version: 'false'
+  version: '1.21.11'
 }
 
 const state = {
