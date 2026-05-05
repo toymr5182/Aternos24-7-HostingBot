@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>⛏ AFK Bot Dashboard</title>
+<script src="/socket.io/socket.io.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Rajdhani:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --green: #4ade80;
+    --green-dim: #16a34a;
+    --green-glow: rgba(74,222,128,0.15);
+    --red: #f87171;
+    --yellow: #fbbf24;
+    --blue: #60a5fa;
+    --cyan: #22d3ee;
+    --bg: #060a06;
+    --bg2: #0d150d;
+    --bg3: #111f11;
+    --border: rgba(74,222,128,0.2);
+    --border-bright: rgba(74,222,128,0.5);
+    --text: #d1fae5;
+    --text-dim: #6b7280;
+    --mono: 'Share Tech Mono', monospace;
+    --display: 'Rajdhani', sans-serif;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--mono);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Scanline overlay */
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.03) 2px, rgba(0,0,0,0.03) 4px);
+    pointer-events: none; z-index: 9999;
+  }
+
+  /* Grid background */
+  body::after {
+    content: '';
+    position: fixed; inset: 0;
+    background-image:
+      linear-gradient(rgba(74,222,128,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(74,222,128,0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none; z-index: 0;
+  }
+
+  .app { position: relative; z-index: 1; max-width: 1400px; margin: 0 auto; padding: 20px; }
+
+  /* Header */
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 24px;
+    border: 1px solid var(--border-bright);
+    background: linear-gradient(135deg, var(--bg2), var(--bg3));
+    margin-bottom: 20px;
+    position: relative; overflow: hidden;
+  }
+  header::before {
+    content: '';
+    position: absolute; top: 0; left: 0; right: 0; height: 2px;
+    background: linear-gradient(90deg, transparent, var(--green), transparent);
+    animation: scan 3s linear infinite;
+  }
+  @keyframes scan { 0%{transform:translateX(-100%)} 100%{transform:translateX(100%)} }
+
+  .logo {
+    display: flex; align-items: center; gap: 12px;
+  }
+  .logo-icon {
+    font-size: 28px;
+    filter: drop-shadow(0 0 8px var(--green));
+  }
+  .logo-text {
+    font-family: var(--display);
+    font-size: 22px; font-weight: 700; letter-spacing: 3px;
+    color: var(--green);
+    text-shadow: 0 0 20px rgba(74,222,128,0.5);
+  }
+  .logo-sub {
+    font-size: 10px; color: var(--text-dim); letter-spacing: 2px;
+    display: block; margin-top: -2px;
+  }
+
+  .status-badge {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 16px;
+    border: 1px solid var(--border);
+    font-size: 12px; letter-spacing: 1px;
+  }
+  .status-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    animation: pulse 2s ease-in-out infinite;
+  }
+  .status-dot.online { background: var(--green); box-shadow: 0 0 8px var(--green); }
+  .status-dot.offline { background: var(--red); box-shadow: 0 0 8px var(--red); animation: none; }
+  .status-dot.reconnecting { background: var(--yellow); box-shadow: 0 0 8px var(--yellow); }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+  /* Grid layout */
+  .grid {
+    display: grid;
+    grid-template-columns: 340px 1fr;
+    grid-template-rows: auto auto 1fr;
+    gap: 16px;
+  }
+
+  /* Panel */
+  .panel {
+    border: 1px solid var(--border);
+    background: var(--bg2);
+    position: relative;
+    transition: border-color 0.3s;
+  }
+  .panel:hover { border-color: var(--border-bright); }
+  .panel-header {
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    font-size: 10px; letter-spacing: 2px; color: var(--green);
+    display: flex; align-items: center; gap: 8px;
+    background: rgba(74,222,128,0.03);
+  }
+  .panel-header::before {
+    content: '▶'; font-size: 8px;
+  }
+  .panel-body { padding: 16px; }
+
+  /* Stats row */
+  .stats-row {
+    grid-column: 1 / -1;
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px;
+  }
+  .stat-card {
+    border: 1px solid var(--border);
+    background: var(--bg2);
+    padding: 14px 16px;
+    position: relative; overflow: hidden;
+  }
+  .stat-card::after {
+    content: '';
+    position: absolute; bottom: 0; left: 0; right: 0; height: 2px;
+    background: linear-gradient(90deg, transparent, var(--green-dim), transparent);
+  }
+  .stat-label { font-size: 9px; letter-spacing: 2px; color: var(--text-dim); }
+  .stat-value {
+    font-family: var(--display); font-size: 26px; font-weight: 700;
+    color: var(--green); line-height: 1.2; margin-top: 4px;
+    text-shadow: 0 0 15px rgba(74,222,128,0.4);
+  }
+  .stat-value.red { color: var(--red); text-shadow: 0 0 15px rgba(248,113,113,0.4); }
+  .stat-value.yellow { color: var(--yellow); }
+  .stat-value.cyan { color: var(--cyan); }
+
+  /* Config panel */
+  .input-group { margin-bottom: 12px; }
+  .input-label {
+    display: block; font-size: 9px; letter-spacing: 2px;
+    color: var(--text-dim); margin-bottom: 6px;
+  }
+  .input-field {
+    width: 100%; padding: 8px 12px;
+    background: var(--bg3); border: 1px solid var(--border);
+    color: var(--text); font-family: var(--mono); font-size: 13px;
+    outline: none; transition: border-color 0.2s, box-shadow 0.2s;
+  }
+  .input-field:focus {
+    border-color: var(--green);
+    box-shadow: 0 0 0 2px rgba(74,222,128,0.1);
+  }
+
+  .btn {
+    width: 100%; padding: 10px; cursor: pointer;
+    font-family: var(--mono); font-size: 12px; letter-spacing: 2px;
+    border: 1px solid; transition: all 0.2s; position: relative; overflow: hidden;
+    text-transform: uppercase;
+  }
+  .btn::before {
+    content: '';
+    position: absolute; inset: 0;
+    background: currentColor; opacity: 0;
+    transition: opacity 0.2s;
+  }
+  .btn:hover::before { opacity: 0.1; }
+  .btn-connect {
+    background: transparent; border-color: var(--green); color: var(--green);
+    margin-bottom: 8px;
+  }
+  .btn-connect:hover { box-shadow: 0 0 15px rgba(74,222,128,0.3); }
+  .btn-disconnect {
+    background: transparent; border-color: var(--red); color: var(--red);
+    margin-bottom: 16px;
+  }
+  .btn-disconnect:hover { box-shadow: 0 0 15px rgba(248,113,113,0.3); }
+
+  .quick-title {
+    font-size: 9px; letter-spacing: 2px; color: var(--text-dim);
+    margin-bottom: 8px; padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+  }
+  .quick-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .btn-quick {
+    width: 100%; padding: 8px 6px; cursor: pointer;
+    background: var(--bg3); border: 1px solid var(--border);
+    color: var(--cyan); font-family: var(--mono); font-size: 10px;
+    letter-spacing: 1px; transition: all 0.2s;
+  }
+  .btn-quick:hover {
+    border-color: var(--cyan); color: var(--green);
+    box-shadow: 0 0 8px rgba(34,211,238,0.2);
+  }
+
+  /* Log panel */
+  .log-container {
+    height: 380px; overflow-y: auto;
+    font-size: 11px; line-height: 1.7;
+    scrollbar-width: thin; scrollbar-color: var(--green-dim) transparent;
+  }
+  .log-container::-webkit-scrollbar { width: 4px; }
+  .log-container::-webkit-scrollbar-track { background: transparent; }
+  .log-container::-webkit-scrollbar-thumb { background: var(--green-dim); }
+
+  .log-entry {
+    padding: 2px 0;
+    display: flex; gap: 8px;
+    animation: fadeIn 0.3s ease;
+  }
+  @keyframes fadeIn { from{opacity:0;transform:translateX(-4px)} to{opacity:1;transform:translateX(0)} }
+  .log-time { color: var(--text-dim); flex-shrink: 0; font-size: 10px; }
+  .log-msg { flex: 1; }
+  .log-msg.info { color: var(--text); }
+  .log-msg.success { color: var(--green); }
+  .log-msg.warn { color: var(--yellow); }
+  .log-msg.error { color: var(--red); }
+  .log-msg.chat { color: var(--cyan); }
+  .log-msg.command { color: #c084fc; }
+
+  /* Command panel */
+  .cmd-panel { grid-column: 1 / -1; }
+  .cmd-form { display: flex; gap: 8px; }
+  .cmd-input {
+    flex: 1; padding: 10px 14px;
+    background: var(--bg3); border: 1px solid var(--border);
+    color: var(--green); font-family: var(--mono); font-size: 13px;
+    outline: none; transition: border-color 0.2s;
+  }
+  .cmd-input::placeholder { color: var(--text-dim); }
+  .cmd-input:focus { border-color: var(--green); }
+  .cmd-input:focus::placeholder { color: transparent; }
+  .btn-send {
+    padding: 10px 20px; cursor: pointer;
+    background: transparent; border: 1px solid var(--green);
+    color: var(--green); font-family: var(--mono); font-size: 12px; letter-spacing: 2px;
+    transition: all 0.2s; white-space: nowrap;
+  }
+  .btn-send:hover {
+    background: rgba(74,222,128,0.1);
+    box-shadow: 0 0 15px rgba(74,222,128,0.3);
+  }
+
+  /* Chat */
+  .chat-log {
+    height: 160px; overflow-y: auto;
+    font-size: 11px; line-height: 1.7; margin-top: 12px;
+    border-top: 1px solid var(--border); padding-top: 10px;
+    scrollbar-width: thin; scrollbar-color: var(--green-dim) transparent;
+  }
+  .chat-entry { color: var(--cyan); animation: fadeIn 0.3s ease; }
+  .chat-username { color: var(--green); }
+
+  /* Reconnect overlay */
+  #reconnect-bar {
+    display: none;
+    position: fixed; top: 0; left: 0; right: 0;
+    background: rgba(251,191,36,0.1); border-bottom: 1px solid var(--yellow);
+    padding: 8px 24px; text-align: center;
+    font-size: 11px; letter-spacing: 1px; color: var(--yellow);
+    z-index: 1000;
+  }
+
+  /* Cursor blink in input */
+  .cmd-input:focus { caret-color: var(--green); }
+
+  @media (max-width: 900px) {
+    .grid { grid-template-columns: 1fr; }
+    .stats-row { grid-template-columns: repeat(2, 1fr); }
+  }
+</style>
+</head>
+<body>
+
+<div id="reconnect-bar">
+  ⚠ กำลัง RECONNECT... <span id="reconnect-info"></span>
+</div>
+
+<div class="app">
+  <header>
+    <div class="logo">
+      <span class="logo-icon">⛏</span>
+      <div>
+        <div class="logo-text">AFK BOT DASHBOARD</div>
+        <span class="logo-sub">AMORYCRAFT • MINECRAFT AFK SYSTEM</span>
+      </div>
+    </div>
+    <div class="status-badge">
+      <div class="status-dot offline" id="status-dot"></div>
+      <span id="status-text">OFFLINE</span>
+    </div>
+  </header>
+
+  <!-- Stats Row -->
+  <div class="stats-row">
+    <div class="stat-card">
+      <div class="stat-label">SERVER HOST</div>
+      <div class="stat-value cyan" id="stat-host" style="font-size:16px;margin-top:8px">-</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">USERNAME</div>
+      <div class="stat-value" id="stat-user" style="font-size:20px;margin-top:6px">-</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">RECONNECTS</div>
+      <div class="stat-value yellow" id="stat-reconnects">0</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">UPTIME</div>
+      <div class="stat-value" id="stat-uptime">00:00:00</div>
+    </div>
+  </div>
+
+  <div class="grid">
+    <!-- Left: Config + Controls -->
+    <div>
+      <div class="panel" style="margin-bottom:16px">
+        <div class="panel-header">BOT CONFIGURATION</div>
+        <div class="panel-body">
+          <div class="input-group">
+            <label class="input-label">SERVER HOST</label>
+            <input class="input-field" id="cfg-host" value="play.amorycraft.com" placeholder="play.amorycraft.com">
+          </div>
+          <div class="input-group">
+            <label class="input-label">PORT</label>
+            <input class="input-field" id="cfg-port" value="25565" placeholder="25565">
+          </div>
+          <div class="input-group">
+            <label class="input-label">USERNAME</label>
+            <input class="input-field" id="cfg-username" value="EERTO" placeholder="EERTO">
+          </div>
+          <button class="btn btn-connect" onclick="connectBot()">▶ CONNECT</button>
+          <button class="btn btn-disconnect" onclick="disconnectBot()">■ DISCONNECT</button>
+
+          <div class="quick-title">QUICK COMMANDS</div>
+          <div class="quick-grid">
+            <button class="btn-quick" onclick="sendCmd('/login a12345')">/login</button>
+            <button class="btn-quick" onclick="sendCmd('/smp')">/smp</button>
+            <button class="btn-quick" onclick="sendCmd('/spawn')">/spawn</button>
+            <button class="btn-quick" onclick="sendCmd('/home')">/home</button>
+            <button class="btn-quick" onclick="sendCmd('/tpa EERTO')">/tpa</button>
+            <button class="btn-quick" onclick="sendCmd('/list')">/list</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right: Log -->
+    <div class="panel">
+      <div class="panel-header">SYSTEM LOG</div>
+      <div class="panel-body">
+        <div class="log-container" id="log-container"></div>
+      </div>
+    </div>
+
+    <!-- Bottom: Command Input -->
+    <div class="panel cmd-panel">
+      <div class="panel-header">COMMAND TERMINAL</div>
+      <div class="panel-body">
+        <div class="cmd-form">
+          <input
+            class="cmd-input" id="cmd-input"
+            placeholder="พิมพ์คำสั่ง เช่น /login a12345 แล้วกด Enter..."
+            onkeydown="if(event.key==='Enter') sendCommand()"
+          >
+          <button class="btn-send" onclick="sendCommand()">▶ SEND</button>
+        </div>
+
+        <div class="chat-log" id="chat-log">
+          <div style="color:var(--text-dim);font-size:10px">— CHAT LOG —</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const socket = io();
+let connectedSince = null;
+let uptimeInterval = null;
+
+// Status update
+function updateStatus(data) {
+  const dot = document.getElementById('status-dot');
+  const txt = document.getElementById('status-text');
+  dot.className = 'status-dot';
+
+  if (data.isConnected) {
+    dot.classList.add('online');
+    txt.textContent = 'ONLINE';
+    connectedSince = data.stats?.connectedSince ? new Date(data.stats.connectedSince) : new Date();
+    if (!uptimeInterval) {
+      uptimeInterval = setInterval(updateUptime, 1000);
+    }
+  } else {
+    dot.classList.add('offline');
+    txt.textContent = 'OFFLINE';
+    connectedSince = null;
+    if (uptimeInterval) { clearInterval(uptimeInterval); uptimeInterval = null; }
+    document.getElementById('stat-uptime').textContent = '00:00:00';
+  }
+
+  document.getElementById('stat-host').textContent = data.config?.host || '-';
+  document.getElementById('stat-user').textContent = data.config?.username || '-';
+  document.getElementById('stat-reconnects').textContent = data.stats?.totalReconnects ?? 0;
+}
+
+function updateUptime() {
+  if (!connectedSince) return;
+  const diff = Math.floor((Date.now() - connectedSince) / 1000);
+  const h = String(Math.floor(diff / 3600)).padStart(2, '0');
+  const m = String(Math.floor((diff % 3600) / 60)).padStart(2, '0');
+  const s = String(diff % 60).padStart(2, '0');
+  document.getElementById('stat-uptime').textContent = `${h}:${m}:${s}`;
+}
+
+// Log
+function appendLog(entry) {
+  const container = document.getElementById('log-container');
+  const div = document.createElement('div');
+  div.className = 'log-entry';
+  const time = new Date(entry.timestamp).toLocaleTimeString('th-TH');
+  div.innerHTML = `<span class="log-time">${time}</span><span class="log-msg ${entry.type}">${escapeHtml(entry.message)}</span>`;
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+
+  // Max 300 entries in DOM
+  while (container.children.length > 300) container.removeChild(container.firstChild);
+}
+
+function escapeHtml(str) {
+  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// Chat
+function appendChat(data) {
+  const container = document.getElementById('chat-log');
+  const div = document.createElement('div');
+  div.className = 'chat-entry';
+  div.innerHTML = `<span class="chat-username">&lt;${escapeHtml(data.username)}&gt;</span> ${escapeHtml(data.message)}`;
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+  while (container.children.length > 100) container.removeChild(container.children[1]);
+}
+
+// Socket events
+socket.on('status', updateStatus);
+socket.on('log', appendLog);
+socket.on('logs', (logs) => {
+  const container = document.getElementById('log-container');
+  container.innerHTML = '';
+  logs.slice(-100).forEach(appendLog);
+});
+socket.on('chat', appendChat);
+socket.on('reconnecting', (data) => {
+  const bar = document.getElementById('reconnect-bar');
+  bar.style.display = 'block';
+  document.getElementById('reconnect-info').textContent =
+    `ครั้งที่ ${data.attempt} — รอ ${data.delay / 1000} วินาที`;
+
+  // Update dot
+  const dot = document.getElementById('status-dot');
+  dot.className = 'status-dot reconnecting';
+  document.getElementById('status-text').textContent = 'RECONNECTING';
+
+  setTimeout(() => { bar.style.display = 'none'; }, data.delay);
+});
+
+// Actions
+async function connectBot() {
+  const host = document.getElementById('cfg-host').value.trim();
+  const port = document.getElementById('cfg-port').value.trim();
+  const username = document.getElementById('cfg-username').value.trim();
+  await fetch('/api/connect', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ host, port, username })
+  });
+}
+
+async function disconnectBot() {
+  await fetch('/api/disconnect', { method: 'POST' });
+}
+
+function sendCmd(cmd) {
+  document.getElementById('cmd-input').value = cmd;
+  sendCommand();
+}
+
+async function sendCommand() {
+  const input = document.getElementById('cmd-input');
+  const command = input.value.trim();
+  if (!command) return;
+  socket.emit('command', command);
+  input.value = '';
+}
+</script>
+</body>
+</html>
