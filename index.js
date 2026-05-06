@@ -4,7 +4,7 @@ const express = require('express')
 let bot
 let afkInterval
 let reconnectTimer = null
-let loginInterval = null
+let loginTimer = null
 let smpTimer = null
 
 const chatLog = []
@@ -19,7 +19,8 @@ const config = {
 const state = {
   status: 'starting',
   autoJump: true,
-  connectedAt: null
+  connectedAt: null,
+  loggedIn: false
 }
 
 function addLog(msg) {
@@ -30,19 +31,40 @@ function addLog(msg) {
 }
 
 function clearTimers() {
-  if (loginInterval) clearInterval(loginInterval)
+  if (loginTimer) clearTimeout(loginTimer)
   if (smpTimer) clearTimeout(smpTimer)
-  loginInterval = null
+  loginTimer = null
   smpTimer = null
 }
 
 function getUptime() {
   if (!state.connectedAt) return '-'
+
   const sec = Math.floor((Date.now() - state.connectedAt) / 1000)
   const h = Math.floor(sec / 3600)
   const m = Math.floor((sec % 3600) / 60)
   const s = sec % 60
+
   return `${h}h ${m}m ${s}s`
+}
+
+function freezeBot() {
+  if (!bot) return
+
+  bot.setControlState('forward', false)
+  bot.setControlState('back', false)
+  bot.setControlState('left', false)
+  bot.setControlState('right', false)
+  bot.setControlState('jump', false)
+  bot.setControlState('sprint', false)
+  bot.setControlState('sneak', false)
+
+  if (bot.physics) bot.physics.enabled = false
+}
+
+function unfreezeBot() {
+  if (!bot) return
+  if (bot.physics) bot.physics.enabled = true
 }
 
 function scheduleReconnect() {
@@ -58,27 +80,26 @@ function scheduleReconnect() {
 
 function runLoginSequence() {
   clearTimers()
+  state.loggedIn = false
 
-  let tries = 0
+  freezeBot()
 
-  loginInterval = setInterval(() => {
+  loginTimer = setTimeout(() => {
     if (!bot || state.status !== 'online') return
 
-    tries++
     bot.chat(`/login ${config.password}`)
-    addLog(`AUTO LOGIN ${tries}`)
-
-    if (tries >= 5) {
-      clearInterval(loginInterval)
-      loginInterval = null
-    }
-  }, 350)
+    addLog(`AUTO: /login ${config.password}`)
+  }, 150)
 
   smpTimer = setTimeout(() => {
     if (!bot || state.status !== 'online') return
+
     bot.chat('/smp')
+    state.loggedIn = true
+    unfreezeBot()
+
     addLog('AUTO: /smp')
-  }, 4500)
+  }, 3500)
 }
 
 function createBot() {
@@ -87,6 +108,8 @@ function createBot() {
   if (afkInterval) clearInterval(afkInterval)
 
   state.status = 'connecting'
+  state.loggedIn = false
+
   addLog('กำลังเชื่อมต่อ...')
 
   bot = mineflayer.createBot({
@@ -99,7 +122,10 @@ function createBot() {
   bot.once('spawn', () => {
     state.status = 'online'
     state.connectedAt = Date.now()
+
+    freezeBot()
     addLog('เข้าเซิร์ฟแล้ว')
+
     runLoginSequence()
   })
 
@@ -120,9 +146,12 @@ function createBot() {
   })
 
   afkInterval = setInterval(() => {
-    if (!bot?.entity || !state.autoJump) return
+    if (!bot?.entity) return
+    if (!state.autoJump) return
+    if (!state.loggedIn) return
 
     bot.setControlState('jump', true)
+
     setTimeout(() => {
       if (bot) bot.setControlState('jump', false)
     }, 400)
@@ -143,6 +172,8 @@ function createBot() {
 
   bot.on('end', () => {
     state.status = 'offline'
+    state.loggedIn = false
+
     clearTimers()
     scheduleReconnect()
   })
@@ -204,10 +235,12 @@ app.get('/', (req, res) => {
 
 app.post('/command', (req, res) => {
   const cmd = String(req.body.cmd || '').trim()
+
   if (cmd && bot && state.status === 'online') {
     bot.chat(cmd)
     addLog(`[YOU] ${cmd}`)
   }
+
   res.redirect('/')
 })
 
@@ -230,6 +263,7 @@ app.post('/reconnect', (req, res) => {
   try { bot.end() } catch {}
 
   setTimeout(createBot, 1000)
+
   res.redirect('/')
 })
 
