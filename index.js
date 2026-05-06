@@ -3,6 +3,10 @@ const express = require('express')
 
 let bot
 let afkInterval
+let reconnectTimer = null
+let loginTimer = null
+let smpTimer = null
+
 const chatLog = []
 
 const config = {
@@ -22,7 +26,7 @@ const state = {
 function addLog(msg) {
   const line = `[${new Date().toLocaleTimeString()}] ${msg}`
   chatLog.unshift(line)
-  if (chatLog.length > 80) chatLog.pop()
+  if (chatLog.length > 100) chatLog.pop()
   state.lastMessage = msg
   console.log(line)
 }
@@ -41,19 +45,22 @@ function getUptime() {
 function runLoginSequence() {
   if (!bot) return
 
-  setTimeout(() => {
-    if (bot) {
+  if (loginTimer) clearTimeout(loginTimer)
+  if (smpTimer) clearTimeout(smpTimer)
+
+  loginTimer = setTimeout(() => {
+    if (bot && state.status === 'online') {
       bot.chat(`/login ${config.password}`)
       addLog(`AUTO: /login ${config.password}`)
     }
-  }, 2000)
+  }, 2500)
 
-  setTimeout(() => {
-    if (bot) {
+  smpTimer = setTimeout(() => {
+    if (bot && state.status === 'online') {
       bot.chat('/smp')
       addLog('AUTO: /smp')
     }
-  }, 4500)
+  }, 5000)
 }
 
 function createBot() {
@@ -104,13 +111,31 @@ function createBot() {
 
   bot.on('kicked', (reason) => {
     state.status = 'kicked'
-    addLog(`[KICKED] ${String(reason)}`)
+
+    let msg = ''
+    try {
+      msg = typeof reason === 'string' ? reason : JSON.stringify(reason)
+    } catch {
+      msg = String(reason)
+    }
+
+    addLog(`[KICKED] ${msg}`)
   })
 
   bot.on('end', () => {
     state.status = 'offline'
+
+    if (loginTimer) clearTimeout(loginTimer)
+    if (smpTimer) clearTimeout(smpTimer)
+
+    if (reconnectTimer) return
+
     addLog('หลุดจากเซิร์ฟ กำลัง reconnect ใน 5 วินาที...')
-    setTimeout(createBot, 5000)
+
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null
+      createBot()
+    }, 5000)
   })
 
   bot.on('error', (err) => {
@@ -151,7 +176,7 @@ app.get('/', (req, res) => {
 
       pre {
         white-space: pre-wrap;
-        max-height: 400px;
+        max-height: 450px;
         overflow: auto;
       }
     </style>
@@ -225,7 +250,6 @@ app.post('/reconnect', (req, res) => {
     bot.end()
   } catch {}
 
-  createBot()
   res.redirect('/')
 })
 
