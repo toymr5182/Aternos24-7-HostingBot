@@ -1,9 +1,9 @@
 {
   "name": "afk-bot",
   "version": "1.0.0",
-  "main": "index.js",
+  "main": "dashboard.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node dashboard.js"
   },
   "dependencies": {
     "express": "^4.21.2",
