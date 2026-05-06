@@ -1,8 +1,6 @@
 const mineflayer = require('mineflayer')
-const readline = require('readline')
 
 let bot
-let rl
 let afkInterval
 
 const chatLog = []
@@ -21,14 +19,6 @@ const state = {
   connectedAt: null
 }
 
-function addLog(msg) {
-  const line = `[${new Date().toLocaleTimeString()}] ${msg}`
-  chatLog.unshift(line)
-  if (chatLog.length > 120) chatLog.pop()
-  setMessage(msg)
-  console.log(line)
-}
-
 function stringifyMsg(msg) {
   try {
     if (typeof msg === 'string') return msg
@@ -37,6 +27,14 @@ function stringifyMsg(msg) {
   } catch {
     return 'Unknown message'
   }
+}
+
+function addLog(msg) {
+  const line = `[${new Date().toLocaleTimeString()}] ${msg}`
+  chatLog.unshift(line)
+  if (chatLog.length > 150) chatLog.pop()
+  state.lastMessage = msg
+  console.log(line)
 }
 
 function getUptime() {
@@ -50,60 +48,17 @@ function getUptime() {
   return `${h}h ${m}m ${s}s`
 }
 
-function splitMessage(text, width = 42) {
-  const msg = String(text || '')
-  const lines = []
-
-  for (let i = 0; i < msg.length; i += width) {
-    lines.push(msg.slice(i, i + width))
-  }
-
-  while (lines.length < 2) lines.push('')
-
-  return lines.slice(0, 2)
-}
-
-function draw() {
-  if (!rl) return
-
-  process.stdout.write('\x1Bc')
-
-  const lines = splitMessage(state.lastMessage, 42)
-
-  console.log('┌────────────────────────────────────────────┐')
-  console.log('│              MINECRAFT AFK BOT             │')
-  console.log('├────────────────────────────────────────────┤')
-  console.log(`│ STATUS    : ${state.status}`.padEnd(45) + '│')
-  console.log(`│ SERVER    : ${config.host}:${config.port}`.padEnd(45) + '│')
-  console.log(`│ USERNAME  : ${config.username}`.padEnd(45) + '│')
-  console.log(`│ UPTIME    : ${getUptime()}`.padEnd(45) + '│')
-  console.log(`│ AUTO JUMP : ${state.autoJump ? 'ON' : 'OFF'}`.padEnd(45) + '│')
-  console.log('├────────────────────────────────────────────┤')
-  console.log(`│ ${lines[0]}`.padEnd(45) + '│')
-  console.log(`│ ${lines[1]}`.padEnd(45) + '│')
-  console.log('└────────────────────────────────────────────┘')
-
-  rl.prompt(true)
-}
-
-function setMessage(msg) {
-  state.lastMessage = msg
-  draw()
-}
-
-function runAutoCommands() {
+function runLoginSequence() {
   setTimeout(() => {
-    if (bot) {
-      bot.chat(`/login ${config.password}`)
-      addLog(`AUTO: /login ${config.password}`)
-    }
+    if (!bot) return
+    bot.chat(`/login ${config.password}`)
+    addLog(`AUTO: /login ${config.password}`)
   }, 2500)
 
   setTimeout(() => {
-    if (bot) {
-      bot.chat('/smp')
-      addLog('AUTO: /smp')
-    }
+    if (!bot) return
+    bot.chat('/smp')
+    addLog('AUTO: /smp')
   }, 5000)
 }
 
@@ -124,7 +79,8 @@ function createBot() {
     state.status = 'online'
     state.connectedAt = Date.now()
     addLog('เข้าเซิร์ฟแล้ว')
-    runAutoCommands()
+
+    runLoginSequence()
   })
 
   bot.on('chat', (username, message) => {
@@ -138,7 +94,8 @@ function createBot() {
   })
 
   bot.on('messagestr', (msg) => {
-    if (msg && msg.trim()) addLog(`[SERVER] ${msg}`)
+    if (!msg) return
+    addLog(`[SERVER] ${msg}`)
   })
 
   afkInterval = setInterval(() => {
@@ -148,8 +105,8 @@ function createBot() {
 
     setTimeout(() => {
       if (bot) bot.setControlState('jump', false)
-    }, 400)
-  }, 30000)
+    }, 180)
+  }, 60000)
 
   bot.on('kicked', (reason) => {
     state.status = 'kicked'
@@ -168,62 +125,28 @@ function createBot() {
   })
 }
 
-function sendChat(msg) {
-  if (bot && bot.chat) {
-    bot.chat(msg)
-    addLog(`[YOU] ${msg}`)
-  }
+function sendCommand(cmd) {
+  if (!cmd || !bot) return false
+
+  bot.chat(cmd)
+  addLog(`[YOU] ${cmd}`)
+  return true
 }
 
-function reconnect() {
+function reconnectBot() {
   try {
     bot.end()
   } catch {}
-  createBot()
+
+  setTimeout(createBot, 1000)
 }
 
-rl = readline.createInterface({
-  input: process.stdin,
-  output: process.stdout,
-  prompt: '> '
-})
-
-rl.on('line', (line) => {
-  const msg = line.trim()
-
-  if (!msg) {
-    draw()
-    return
-  }
-
-  if (msg === '/afk on') {
-    state.autoJump = true
-    addLog('เปิด auto jump แล้ว')
-    return
-  }
-
-  if (msg === '/afk off') {
-    state.autoJump = false
-    addLog('ปิด auto jump แล้ว')
-    return
-  }
-
-  if (msg === '/reconnect') {
-    reconnect()
-    return
-  }
-
-  sendChat(msg)
-})
-
-draw()
-createBot()
-
 module.exports = {
+  createBot,
+  sendCommand,
+  reconnectBot,
   state,
   config,
   chatLog,
-  sendChat,
-  reconnect,
   getUptime
 }
