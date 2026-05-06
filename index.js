@@ -4,7 +4,7 @@ const express = require('express')
 let bot
 let afkInterval
 let reconnectTimer = null
-let loginTimer = null
+let loginInterval = null
 let smpTimer = null
 
 const chatLog = []
@@ -19,7 +19,6 @@ const config = {
 const state = {
   status: 'starting',
   autoJump: true,
-  lastMessage: '-',
   connectedAt: null
 }
 
@@ -27,26 +26,23 @@ function addLog(msg) {
   const line = `[${new Date().toLocaleTimeString()}] ${msg}`
   chatLog.unshift(line)
   if (chatLog.length > 120) chatLog.pop()
-  state.lastMessage = msg
   console.log(line)
+}
+
+function clearTimers() {
+  if (loginInterval) clearInterval(loginInterval)
+  if (smpTimer) clearTimeout(smpTimer)
+  loginInterval = null
+  smpTimer = null
 }
 
 function getUptime() {
   if (!state.connectedAt) return '-'
-
   const sec = Math.floor((Date.now() - state.connectedAt) / 1000)
   const h = Math.floor(sec / 3600)
   const m = Math.floor((sec % 3600) / 60)
   const s = sec % 60
-
   return `${h}h ${m}m ${s}s`
-}
-
-function clearTimers() {
-  if (loginTimer) clearTimeout(loginTimer)
-  if (smpTimer) clearTimeout(smpTimer)
-  loginTimer = null
-  smpTimer = null
 }
 
 function scheduleReconnect() {
@@ -63,19 +59,26 @@ function scheduleReconnect() {
 function runLoginSequence() {
   clearTimers()
 
-  loginTimer = setTimeout(() => {
+  let tries = 0
+
+  loginInterval = setInterval(() => {
     if (!bot || state.status !== 'online') return
 
+    tries++
     bot.chat(`/login ${config.password}`)
-    addLog(`AUTO: /login ${config.password}`)
-  }, 300)
+    addLog(`AUTO LOGIN ${tries}`)
+
+    if (tries >= 5) {
+      clearInterval(loginInterval)
+      loginInterval = null
+    }
+  }, 350)
 
   smpTimer = setTimeout(() => {
     if (!bot || state.status !== 'online') return
-
     bot.chat('/smp')
     addLog('AUTO: /smp')
-  }, 3000)
+  }, 4500)
 }
 
 function createBot() {
@@ -101,25 +104,25 @@ function createBot() {
   })
 
   bot.on('chat', (username, message) => {
-    if (username === bot.username) return
-    addLog(`[CHAT] ${username}: ${message}`)
+    if (username !== bot.username) {
+      addLog(`[CHAT] ${username}: ${message}`)
+    }
   })
 
   bot.on('whisper', (username, message) => {
-    if (username === bot.username) return
-    addLog(`[WHISPER] ${username}: ${message}`)
+    if (username !== bot.username) {
+      addLog(`[WHISPER] ${username}: ${message}`)
+    }
   })
 
   bot.on('messagestr', (msg) => {
-    if (!msg) return
-    addLog(`[SERVER] ${msg}`)
+    if (msg) addLog(`[SERVER] ${msg}`)
   })
 
   afkInterval = setInterval(() => {
     if (!bot?.entity || !state.autoJump) return
 
     bot.setControlState('jump', true)
-
     setTimeout(() => {
       if (bot) bot.setControlState('jump', false)
     }, 400)
@@ -157,31 +160,13 @@ app.get('/', (req, res) => {
   res.send(`
   <html>
   <head>
-    <title>MC Bot Dashboard</title>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta http-equiv="refresh" content="4" />
     <style>
-      body{
-        font-family:Arial;
-        max-width:900px;
-        margin:20px auto;
-        padding:12px;
-      }
-      .box{
-        border:1px solid #ccc;
-        border-radius:8px;
-        padding:12px;
-        margin-bottom:12px;
-      }
-      input,button{
-        padding:10px;
-        font-size:15px;
-      }
-      pre{
-        white-space:pre-wrap;
-        max-height:450px;
-        overflow:auto;
-      }
+      body { font-family: Arial; max-width: 900px; margin: 20px auto; padding: 12px; }
+      .box { border: 1px solid #ccc; border-radius: 8px; padding: 12px; margin-bottom: 12px; }
+      input, button { padding: 10px; font-size: 15px; }
+      pre { white-space: pre-wrap; max-height: 450px; overflow: auto; }
     </style>
   </head>
   <body>
@@ -203,17 +188,9 @@ app.get('/', (req, res) => {
     </div>
 
     <div class="box">
-      <form method="POST" action="/afk/on" style="display:inline">
-        <button type="submit">AFK ON</button>
-      </form>
-
-      <form method="POST" action="/afk/off" style="display:inline">
-        <button type="submit">AFK OFF</button>
-      </form>
-
-      <form method="POST" action="/reconnect" style="display:inline">
-        <button type="submit">Reconnect</button>
-      </form>
+      <form method="POST" action="/afk/on" style="display:inline"><button>AFK ON</button></form>
+      <form method="POST" action="/afk/off" style="display:inline"><button>AFK OFF</button></form>
+      <form method="POST" action="/reconnect" style="display:inline"><button>Reconnect</button></form>
     </div>
 
     <div class="box">
@@ -227,24 +204,20 @@ app.get('/', (req, res) => {
 
 app.post('/command', (req, res) => {
   const cmd = String(req.body.cmd || '').trim()
-
   if (cmd && bot && state.status === 'online') {
     bot.chat(cmd)
     addLog(`[YOU] ${cmd}`)
   }
-
   res.redirect('/')
 })
 
 app.post('/afk/on', (req, res) => {
   state.autoJump = true
-  addLog('เปิด auto jump')
   res.redirect('/')
 })
 
 app.post('/afk/off', (req, res) => {
   state.autoJump = false
-  addLog('ปิด auto jump')
   res.redirect('/')
 })
 
@@ -254,12 +227,9 @@ app.post('/reconnect', (req, res) => {
     reconnectTimer = null
   }
 
-  try {
-    bot.end()
-  } catch {}
+  try { bot.end() } catch {}
 
   setTimeout(createBot, 1000)
-
   res.redirect('/')
 })
 
