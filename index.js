@@ -26,7 +26,7 @@ const state = {
 function addLog(msg) {
   const line = `[${new Date().toLocaleTimeString()}] ${msg}`
   chatLog.unshift(line)
-  if (chatLog.length > 100) chatLog.pop()
+  if (chatLog.length > 120) chatLog.pop()
   state.lastMessage = msg
   console.log(line)
 }
@@ -42,28 +42,45 @@ function getUptime() {
   return `${h}h ${m}m ${s}s`
 }
 
-function runLoginSequence() {
-  if (!bot) return
-
+function clearTimers() {
   if (loginTimer) clearTimeout(loginTimer)
   if (smpTimer) clearTimeout(smpTimer)
+  loginTimer = null
+  smpTimer = null
+}
 
-  loginTimer = setTimeout(() => {
-    if (bot && state.status === 'online') {
-      bot.chat(`/login ${config.password}`)
-      addLog(`AUTO: /login ${config.password}`)
-    }
-  }, 2500)
+function scheduleReconnect() {
+  if (reconnectTimer) return
 
-  smpTimer = setTimeout(() => {
-    if (bot && state.status === 'online') {
-      bot.chat('/smp')
-      addLog('AUTO: /smp')
-    }
+  addLog('หลุดจากเซิร์ฟ กำลัง reconnect ใน 5 วินาที...')
+
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null
+    createBot()
   }, 5000)
 }
 
+function runLoginSequence() {
+  clearTimers()
+
+  loginTimer = setTimeout(() => {
+    if (!bot || state.status !== 'online') return
+
+    bot.chat(`/login ${config.password}`)
+    addLog(`AUTO: /login ${config.password}`)
+  }, 300)
+
+  smpTimer = setTimeout(() => {
+    if (!bot || state.status !== 'online') return
+
+    bot.chat('/smp')
+    addLog('AUTO: /smp')
+  }, 3000)
+}
+
 function createBot() {
+  clearTimers()
+
   if (afkInterval) clearInterval(afkInterval)
 
   state.status = 'connecting'
@@ -84,18 +101,17 @@ function createBot() {
   })
 
   bot.on('chat', (username, message) => {
-    if (username !== bot.username) {
-      addLog(`[CHAT] ${username}: ${message}`)
-    }
+    if (username === bot.username) return
+    addLog(`[CHAT] ${username}: ${message}`)
   })
 
   bot.on('whisper', (username, message) => {
-    if (username !== bot.username) {
-      addLog(`[WHISPER] ${username}: ${message}`)
-    }
+    if (username === bot.username) return
+    addLog(`[WHISPER] ${username}: ${message}`)
   })
 
   bot.on('messagestr', (msg) => {
+    if (!msg) return
     addLog(`[SERVER] ${msg}`)
   })
 
@@ -112,30 +128,20 @@ function createBot() {
   bot.on('kicked', (reason) => {
     state.status = 'kicked'
 
-    let msg = ''
+    let text = ''
     try {
-      msg = typeof reason === 'string' ? reason : JSON.stringify(reason)
+      text = typeof reason === 'string' ? reason : JSON.stringify(reason)
     } catch {
-      msg = String(reason)
+      text = String(reason)
     }
 
-    addLog(`[KICKED] ${msg}`)
+    addLog(`[KICKED] ${text}`)
   })
 
   bot.on('end', () => {
     state.status = 'offline'
-
-    if (loginTimer) clearTimeout(loginTimer)
-    if (smpTimer) clearTimeout(smpTimer)
-
-    if (reconnectTimer) return
-
-    addLog('หลุดจากเซิร์ฟ กำลัง reconnect ใน 5 วินาที...')
-
-    reconnectTimer = setTimeout(() => {
-      reconnectTimer = null
-      createBot()
-    }, 5000)
+    clearTimers()
+    scheduleReconnect()
   })
 
   bot.on('error', (err) => {
@@ -153,31 +159,28 @@ app.get('/', (req, res) => {
   <head>
     <title>MC Bot Dashboard</title>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta http-equiv="refresh" content="5">
+    <meta http-equiv="refresh" content="4" />
     <style>
-      body {
-        font-family: Arial;
-        max-width: 900px;
-        margin: 20px auto;
-        padding: 12px;
+      body{
+        font-family:Arial;
+        max-width:900px;
+        margin:20px auto;
+        padding:12px;
       }
-
-      .box {
-        border: 1px solid #ccc;
-        border-radius: 8px;
-        padding: 12px;
-        margin-bottom: 12px;
+      .box{
+        border:1px solid #ccc;
+        border-radius:8px;
+        padding:12px;
+        margin-bottom:12px;
       }
-
-      input, button {
-        padding: 10px;
-        font-size: 15px;
+      input,button{
+        padding:10px;
+        font-size:15px;
       }
-
-      pre {
-        white-space: pre-wrap;
-        max-height: 450px;
-        overflow: auto;
+      pre{
+        white-space:pre-wrap;
+        max-height:450px;
+        overflow:auto;
       }
     </style>
   </head>
@@ -225,7 +228,7 @@ app.get('/', (req, res) => {
 app.post('/command', (req, res) => {
   const cmd = String(req.body.cmd || '').trim()
 
-  if (cmd && bot) {
+  if (cmd && bot && state.status === 'online') {
     bot.chat(cmd)
     addLog(`[YOU] ${cmd}`)
   }
@@ -246,9 +249,16 @@ app.post('/afk/off', (req, res) => {
 })
 
 app.post('/reconnect', (req, res) => {
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer)
+    reconnectTimer = null
+  }
+
   try {
     bot.end()
   } catch {}
+
+  setTimeout(createBot, 1000)
 
   res.redirect('/')
 })
